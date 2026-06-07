@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- THEME_DARK -->
+    <color name="background">#121212</color>
+    <color name="surface">#1E1E1E</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#B0B0B0</color>
+    <color name="splash_background">#121212</color>
+    <!-- END_THEME_DARK -->
+
+    <!-- THEME_LIGHT -->
+    <!--
+    <color name="background">#FFFFFF</color>
+    <color name="surface">#F5F5F5</color>
+    <color name="text_primary">#000000</color>
+    <color name="text_secondary">#666666</color>
+    <color name="splash_background">#FFFFFF</color>
+    -->
+    <!-- END_THEME_LIGHT -->
+
+    <color name="primary">{{PRIMARY_COLOR}}</color>
+    <color name="colorPrimary">{{PRIMARY_COLOR}}</color>
+    <color name="colorPrimaryDark">{{PRIMARY_COLOR}}</color>
+    <color name="colorAccent">{{PRIMARY_COLOR}}</color>
+</resources>
