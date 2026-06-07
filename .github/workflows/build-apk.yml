@@ -1,0 +1,124 @@
+name: Build Android APK
+
+on:
+  repository_dispatch:
+    types: [build-apk]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle') }}
+          restore-keys: gradle-
+
+      - name: Parse config
+        run: |
+          CONFIG='${{ github.event.client_payload.config }}'
+          echo "PERMISSIONS=$(echo $CONFIG | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('permissions','internet'))")" >> $GITHUB_ENV
+          echo "PUSH_NOTIF=$(echo $CONFIG | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('pushNotifications','false'))")" >> $GITHUB_ENV
+          echo "ADMOB=$(echo $CONFIG | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('admob','false'))")" >> $GITHUB_ENV
+
+      - name: Replace package name
+        run: |
+          PKG="${{ github.event.client_payload.packageName }}"
+          PKG_PATH="${PKG//.//}"
+          find . -type f \( -name "*.gradle" -o -name "*.xml" -o -name "*.java" \) \
+            -not -path "./.git/*" \
+            -exec sed -i "s|{{PACKAGE_NAME}}|${PKG}|g" {} +
+          find . -type f \( -name "*.gradle" -o -name "*.xml" -o -name "*.java" \) \
+            -not -path "./.git/*" \
+            -exec sed -i "s|com\.example\.webtoapp|${PKG}|g" {} +
+          mkdir -p "app/src/main/java/${PKG_PATH}"
+          cp app/src/main/java/com/example/webtoapp/*.java \
+             "app/src/main/java/${PKG_PATH}/"
+          rm -rf app/src/main/java/com
+
+      - name: Replace placeholders
+        run: |
+          APP="${{ github.event.client_payload.appName }}"
+          URL="${{ github.event.client_payload.url }}"
+          COLOR="${{ github.event.client_payload.primaryColor }}"
+          find . -type f \( -name "*.xml" -o -name "*.java" \) -not -path "./.git/*" \
+            -exec sed -i "s|{{APP_NAME}}|${APP}|g" {} +
+          find . -type f -name "*.java" -not -path "./.git/*" \
+            -exec sed -i "s|{{WEBSITE_URL}}|${URL}|g" {} +
+          find . -type f -name "*.xml" -not -path "./.git/*" \
+            -exec sed -i "s|{{PRIMARY_COLOR}}|${COLOR}|g" {} +
+          find . -type f -name "*.java" -not -path "./.git/*" \
+            -exec sed -i 's|{{CUSTOM_JS}}||g' {} +
+
+      - name: Remove unused permissions
+        run: |
+          for perm in camera storage location notifications; do
+            if [[ "${PERMISSIONS}" != *"$perm"* ]]; then
+              UPPER=$(echo $perm | tr '[:lower:]' '[:upper:]')
+              sed -i "/<!-- PERMISSION_${UPPER} -->/,/<!-- END_PERMISSION_${UPPER} -->/d" \
+                app/src/main/AndroidManifest.xml
+            fi
+          done
+
+      - name: Download and convert icon
+        if: ${{ github.event.client_payload.iconUrl != '' }}
+        run: |
+          pip install Pillow -q
+          wget -q -O /tmp/icon_raw "${{ github.event.client_payload.iconUrl }}" || \
+          curl -sL "${{ github.event.client_payload.iconUrl }}" -o /tmp/icon_raw
+          declare -A SIZES=([mdpi]=48 [hdpi]=72 [xhdpi]=96 [xxhdpi]=144 [xxxhdpi]=192)
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            size=${SIZES[$density]}
+            DIR="app/src/main/res/mipmap-${density}"
+            python3 -c "
+from PIL import Image
+try:
+    img = Image.open('/tmp/icon_raw').convert('RGBA')
+    img = img.resize(($size, $size), Image.LANCZOS)
+    bg = Image.new('RGB', img.size, (255,255,255))
+    bg.paste(img, mask=img.split()[3])
+    bg.save('$DIR/ic_launcher.png', 'PNG')
+except Exception as e:
+    print('Icon error:', e)
+    Image.new('RGB', ($size,$size), (102,126,234)).save('$DIR/ic_launcher.png','PNG')
+"
+            cp "$DIR/ic_launcher.png" "$DIR/ic_launcher_round.png"
+          done
+
+      - name: Setup Gradle wrapper
+        run: |
+          mkdir -p gradle/wrapper
+          wget -q "https://github.com/gradle/gradle/raw/v8.2.0/gradle/wrapper/gradle-wrapper.jar" \
+            -O gradle/wrapper/gradle-wrapper.jar 2>/dev/null || true
+          if [ ! -s gradle/wrapper/gradle-wrapper.jar ]; then
+            gradle wrapper --gradle-version=8.2 --distribution-type=bin
+          fi
+          chmod +x gradlew
+
+      - name: Build APK
+        run: ./gradlew assembleRelease --no-daemon 2>&1
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.event.client_payload.buildId }}
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 7
+          if-no-files-found: warn
